@@ -31,7 +31,7 @@ jobs:
   delete-branch:
     runs-on: ubuntu-slim
     steps:
-      - uses: garaemon/delete-closed-branch@v1
+      - uses: garaemon/delete-closed-branch@v1.1
 ```
 
 The action needs both write permissions: `contents` to delete the branch, and
@@ -40,10 +40,31 @@ checkout.
 
 This repository is public, so private repositories can use the action too.
 
+## Reopen grace period
+
+For a pull request closed without a merge, the action waits 60 seconds before
+it changes anything. If someone reopens the pull request in the meantime, the
+action keeps the branch and the stacked pull requests as they are. A merged
+pull request cannot reopen, so the action handles it at once.
+
+The runner stays busy while it waits. A private repository spends its Actions
+minutes on the wait. Set `unmerged-delay-seconds` to change the wait, or to 0
+to skip it:
+
+```yaml
+      - uses: garaemon/delete-closed-branch@v1.1
+        with:
+          unmerged-delay-seconds: 0
+```
+
 ## Versioning
 
-Pin a tag, such as `v1`, instead of `main`. A change on `main` then reaches
-the callers only when they move to a new tag.
+Pin a tag instead of `main`. Each tag stays on one commit, so a change on
+`main` reaches the callers only when they move to a new tag. The tags differ
+as follows:
+
+- `v1.1` adds the reopen grace period.
+- `v1` deletes the branch as soon as the pull request closes.
 
 This repository runs the action on itself from the pull request's head, so a
 change gets exercised on its own pull request before the next tag.
