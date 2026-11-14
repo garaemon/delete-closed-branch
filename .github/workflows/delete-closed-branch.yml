@@ -10,6 +10,12 @@ permissions:
 
 jobs:
   delete-branch:
-    # The local path runs the copy on the pull request's merge commit, so a
-    # change to the reusable workflow gets exercised before it reaches main.
-    uses: ./.github/workflows/delete-closed-branch-reusable.yml
+    runs-on: ubuntu-slim
+    steps:
+      # Check out the pull request's own head so that a change to action.yml
+      # runs on its pull request before the next tag. The merge ref does not
+      # exist for a pull request closed with conflicts.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: ./
