@@ -40,6 +40,23 @@ checkout.
 
 This repository is public, so private repositories can use the action too.
 
+## Reopen grace period
+
+For a pull request closed without a merge, the action waits 60 seconds before
+it changes anything. If someone reopens the pull request in the meantime, the
+action keeps the branch and the stacked pull requests as they are. A merged
+pull request cannot reopen, so the action handles it at once.
+
+The runner stays busy while it waits. A private repository spends its Actions
+minutes on the wait. Set `unmerged-delay-seconds` to change the wait, or to 0
+to skip it:
+
+```yaml
+      - uses: garaemon/delete-closed-branch@v1
+        with:
+          unmerged-delay-seconds: 0
+```
+
 ## Versioning
 
 Pin a tag, such as `v1`, instead of `main`. A change on `main` then reaches
