@@ -11,6 +11,7 @@ function createContext({
   action = 'closed',
   headRef = 'feature',
   headRepoFullName = `${OWNER}/${REPO}`,
+  merged = true,
 } = {}) {
   return {
     eventName,
@@ -20,6 +21,7 @@ function createContext({
       repository: { default_branch: 'main' },
       pull_request: {
         number: 7,
+        merged,
         head: {
           ref: headRef,
           repo: headRepoFullName === null ? null : { full_name: headRepoFullName },
@@ -29,7 +31,11 @@ function createContext({
   };
 }
 
-function createFakeGithub({ stackedPulls = [], deleteRefError = null } = {}) {
+function createFakeGithub({
+  stackedPulls = [],
+  deleteRefError = null,
+  currentPullState = 'closed',
+} = {}) {
   const updatedPulls = [];
   const deletedRefs = [];
   const listPulls = () => {};
@@ -45,6 +51,7 @@ function createFakeGithub({ stackedPulls = [], deleteRefError = null } = {}) {
     rest: {
       pulls: {
         list: listPulls,
+        get: async () => ({ data: { state: currentPullState } }),
         update: async (params) => {
           updatedPulls.push(params);
         },
@@ -65,8 +72,16 @@ function createFakeCore() {
   return { info: () => {} };
 }
 
-async function runWith({ context = createContext(), github = createFakeGithub() } = {}) {
-  await deleteClosedBranch({ github, context, core: createFakeCore() });
+async function runWith({
+  context = createContext(),
+  github = createFakeGithub(),
+  unmergedDelaySeconds = 60,
+  sleptMilliseconds = [],
+} = {}) {
+  const sleep = async (milliseconds) => {
+    sleptMilliseconds.push(milliseconds);
+  };
+  await deleteClosedBranch({ github, context, core: createFakeCore(), unmergedDelaySeconds, sleep });
   return github;
 }
 
@@ -128,4 +143,77 @@ test('should_rethrow_other_deletion_errors', async () => {
   const github = createFakeGithub({ deleteRefError: forbiddenError });
 
   await assert.rejects(runWith({ github }), forbiddenError);
+});
+
+test('should_wait_before_deleting_an_unmerged_branch', async () => {
+  const sleptMilliseconds = [];
+
+  await runWith({ context: createContext({ merged: false }), sleptMilliseconds });
+
+  assert.deepEqual(sleptMilliseconds, [60000]);
+});
+
+test('should_not_wait_for_a_merged_pull', async () => {
+  const sleptMilliseconds = [];
+
+  await runWith({ context: createContext({ merged: true }), sleptMilliseconds });
+
+  assert.deepEqual(sleptMilliseconds, []);
+});
+
+test('should_not_wait_when_the_delay_is_zero', async () => {
+  const sleptMilliseconds = [];
+
+  await runWith({
+    context: createContext({ merged: false }),
+    unmergedDelaySeconds: 0,
+    sleptMilliseconds,
+  });
+
+  assert.deepEqual(sleptMilliseconds, []);
+});
+
+test('should_delete_an_unmerged_branch_that_stays_closed', async () => {
+  const github = await runWith({ context: createContext({ merged: false }) });
+
+  assert.deepEqual(github.deletedRefs, ['heads/feature']);
+});
+
+test('should_keep_the_branch_when_the_pull_is_reopened', async () => {
+  const github = createFakeGithub({ currentPullState: 'open' });
+
+  await runWith({ context: createContext({ merged: false }), github });
+
+  assert.deepEqual(github.deletedRefs, []);
+});
+
+test('should_keep_stacked_pulls_when_the_pull_is_reopened', async () => {
+  const github = createFakeGithub({
+    currentPullState: 'open',
+    stackedPulls: [{ number: 8, base: 'feature' }],
+  });
+
+  await runWith({ context: createContext({ merged: false }), github });
+
+  assert.deepEqual(github.updatedPulls, []);
+});
+
+test('should_accept_the_delay_as_a_string', async () => {
+  const sleptMilliseconds = [];
+
+  await runWith({
+    context: createContext({ merged: false }),
+    unmergedDelaySeconds: '5',
+    sleptMilliseconds,
+  });
+
+  assert.deepEqual(sleptMilliseconds, [5000]);
+});
+
+test('should_reject_a_negative_delay', async () => {
+  await assert.rejects(runWith({ unmergedDelaySeconds: -1 }), /unmerged-delay-seconds/);
+});
+
+test('should_reject_a_non_numeric_delay', async () => {
+  await assert.rejects(runWith({ unmergedDelaySeconds: 'soon' }), /unmerged-delay-seconds/);
 });

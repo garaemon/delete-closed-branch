@@ -7,13 +7,27 @@ branding:
   icon: git-branch
   color: gray-dark
 
+inputs:
+  unmerged-delay-seconds:
+    description: >-
+      Seconds to wait before acting on a pull request closed without a merge.
+      The action does nothing if someone reopens the pull request in the
+      meantime. Set 0 to act at once. A merged pull request never waits.
+    default: '60'
+
 runs:
   using: composite
   steps:
     - uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
+        UNMERGED_DELAY_SECONDS: ${{ inputs.unmerged-delay-seconds }}
       with:
         script: |
           const { deleteClosedBranch } = require(`${process.env.ACTION_PATH}/src/delete-closed-branch.js`);
-          await deleteClosedBranch({ github, context, core });
+          await deleteClosedBranch({
+            github,
+            context,
+            core,
+            unmergedDelaySeconds: process.env.UNMERGED_DELAY_SECONDS,
+          });

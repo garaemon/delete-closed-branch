@@ -1,3 +1,5 @@
+const MILLISECONDS_PER_SECOND = 1000;
+
 /**
  * Retargets the pull requests stacked on a closed pull request to the default
  * branch, then deletes the closed branch.
@@ -6,8 +8,20 @@
  * provides. Logs and returns without changes when the event is not a closed
  * pull request from this repository. Rejects when the GitHub API fails, except
  * when the branch is already gone.
+ *
+ * For a pull request closed without a merge, waits `unmergedDelaySeconds`
+ * first and does nothing if someone reopened the pull request meanwhile.
+ * `unmergedDelaySeconds` is a non-negative number or numeric string, and
+ * defaults to 0. `sleep` replaces the timer in tests.
  */
-async function deleteClosedBranch({ github, context, core }) {
+async function deleteClosedBranch({
+  github,
+  context,
+  core,
+  unmergedDelaySeconds = 0,
+  sleep = sleepFor,
+}) {
+  const delaySeconds = parseDelaySeconds(unmergedDelaySeconds);
   const skipReason = findSkipReason(context);
   if (skipReason) {
     core.info(`Skip: ${skipReason}`);
@@ -15,12 +29,44 @@ async function deleteClosedBranch({ github, context, core }) {
   }
 
   const { owner, repo } = context.repo;
-  const closedBranch = context.payload.pull_request.head.ref;
+  const closedPull = context.payload.pull_request;
+  if (!closedPull.merged && delaySeconds > 0) {
+    const reopened = await waitForReopen({ github, core, owner, repo, closedPull, delaySeconds, sleep });
+    if (reopened) {
+      core.info(`Skip: #${closedPull.number} was reopened.`);
+      return;
+    }
+  }
+
+  const closedBranch = closedPull.head.ref;
   const defaultBranch = context.payload.repository.default_branch;
   // GitHub closes every open pull request whose base branch is deleted, so the
   // stacked pull requests move to the default branch before the deletion.
   await retargetStackedPulls({ github, core, owner, repo, closedBranch, defaultBranch });
   await deleteBranch({ github, core, owner, repo, closedBranch });
+}
+
+function parseDelaySeconds(unmergedDelaySeconds) {
+  const delaySeconds = Number(unmergedDelaySeconds);
+  if (!Number.isFinite(delaySeconds) || delaySeconds < 0) {
+    throw new Error(`unmerged-delay-seconds must be a non-negative number, got "${unmergedDelaySeconds}".`);
+  }
+  return delaySeconds;
+}
+
+function sleepFor(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForReopen({ github, core, owner, repo, closedPull, delaySeconds, sleep }) {
+  core.info(`Wait ${delaySeconds} seconds in case #${closedPull.number} gets reopened.`);
+  await sleep(delaySeconds * MILLISECONDS_PER_SECOND);
+  const { data: currentPull } = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: closedPull.number,
+  });
+  return currentPull.state === 'open';
 }
 
 function findSkipReason(context) {
